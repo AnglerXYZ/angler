@@ -6,37 +6,71 @@ import { useWallet } from "@/context/WalletContext";
 
 export default function Home() {
   const [postLink, setPostLink] = useState("");
+  const [linkError, setLinkError] = useState(""); // ✅ New state
   const [status, setStatus] = useState("");
   const { account, loginWallet } = useWallet();
 
-  const saveAndJoin = async () => {
-    if (!account || !postLink) {
-      return alert("Please connect wallet and paste your post link.");
+  const isValidXPostLink = (link) => {
+    const regex = /^https:\/\/x\.com\/[a-zA-Z0-9_]+\/status\/\d+(\?.*)?\/?$/;
+    return regex.test(link);
+  };
+  
+
+  const handlePostLinkChange = (e) => {
+    const value = e.target.value;
+    setPostLink(value);
+
+    // ✅ Real-time validation
+    if (value.trim() === "") {
+      setLinkError("");
+    } else if (!isValidXPostLink(value)) {
+      setLinkError(
+        "Link must be a valid X post. Example: https://x.com/username/status/1234567890"
+      );
+    } else {
+      setLinkError("");
     }
+  };
+
+  const saveAndJoin = async () => {
+    if (!account) return alert("Please connect your wallet.");
+    if (!isValidXPostLink(postLink)) return alert("Invalid X post link.");
 
     try {
+      const contract = await getContract();
+
+      const alreadyJoined = await contract.isWaitlisted(account);
+      if (alreadyJoined) {
+        setStatus("✅ You've already joined the waitlist.");
+        return;
+      }
+
+      setStatus("⏳ Waiting for transaction approval...");
+
+      const tx = await contract.joinWaitlist();
+      await tx.wait();
+
+      setStatus("🎉 Successfully joined the waitlist!");
+
       const res = await fetch("/api/save-user", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ address: account, postLink }),
       });
 
       const data = await res.json();
       if (!data.success) {
         setStatus("❌ Failed to save user: " + data.error);
-        return;
       }
-
-      const contract = await getContract();
-      const tx = await contract.joinWaitlist();
-      await tx.wait();
-
-      setStatus("🎉 Successfully joined the waitlist!");
     } catch (err) {
-      console.error(err);
-      setStatus("❌ Error joining waitlist.");
+      console.error("Transaction error:", err);
+      if (err.code === 4001) {
+        setStatus("❌ Transaction rejected by user.");
+      } else {
+        setStatus(
+          "❌ Error: " + (err?.reason || err?.message || "Internal RPC Error")
+        );
+      }
     }
   };
 
@@ -102,17 +136,27 @@ export default function Home() {
                 3. Paste the post link below and join the waitlist!
               </p>
             </div>
+
+            {/* ✅ Input dengan validasi */}
             <input
               type="text"
               value={postLink}
-              onChange={(e) => setPostLink(e.target.value)}
+              onChange={handlePostLinkChange}
               placeholder="Paste your X post link here"
-              className="w-full p-3 border border-gray-300 rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-gray-400 placeholder-gray-400 text-gray-900"
+              className={`w-full p-3 border ${
+                linkError ? "border-red-500" : "border-gray-300"
+              } rounded-lg mb-2 focus:outline-none focus:ring-2 ${
+                linkError ? "focus:ring-red-400" : "focus:ring-gray-400"
+              } placeholder-gray-400 text-gray-900`}
             />
+            {linkError && (
+              <p className="text-sm text-red-600 mb-4">{linkError}</p>
+            )}
 
             <button
               onClick={saveAndJoin}
               className="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl shadow-md transition cursor-pointer"
+              disabled={!!linkError || postLink.trim() === ""}
             >
               Join Waitlist
             </button>
